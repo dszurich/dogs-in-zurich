@@ -10,11 +10,13 @@ from copy import deepcopy
 import time
 import asyncio
 
+# ./data/raw/mpg.csv
+
 # Load Data
-df = pd.read_csv("https://drive.google.com/uc?export=download&id=1PAoIbp1cZrthkuqLSNGcPl_fkkr_YJEK")
+df = pd.read_csv("./data/raw/20200306_hundehalter.csv")
 
 # Load geojson data
-with urlopen('https://drive.google.com/uc?export=download&id=1jS2OxyS7alvJjMYaLH8GGFWcTcjkj37z') as response:
+with open('./data/raw/stzh.adm_stadtkreise_a.json') as response:
     counties = json.load(response)
 
 # Group data by district and count the number of dog owners
