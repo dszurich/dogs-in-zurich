@@ -1,4 +1,3 @@
-
 # Streamlit live coding script
 import streamlit as st
 import pandas as pd
@@ -8,116 +7,160 @@ import plotly.graph_objects as go
 from urllib.request import urlopen
 import json
 from copy import deepcopy
-from adjustText import adjust_text #added
-#conda install 
+import time
+import asyncio
 
-st.text('Updated 10 Sept 2024 4.14 pm')
+# Load Data
+df = pd.read_csv("https://drive.google.com/uc?export=download&id=1PAoIbp1cZrthkuqLSNGcPl_fkkr_YJEK")
 
-@st.cache_data
-def load_data(path):
-    df = pd.read_csv(path)
-    return df
+# Load geojson data
+with urlopen('https://drive.google.com/uc?export=download&id=1jS2OxyS7alvJjMYaLH8GGFWcTcjkj37z') as response:
+    counties = json.load(response)
 
-# First some MPG Data Exploration
-mpg_df_raw = load_data(path="./data/raw/mpg.csv")
-mpg_df = deepcopy(mpg_df_raw)
-mpg_data = mpg_df
+# Group data by district and count the number of dog owners
+district_counts = df.groupby('STADTKREIS')['HALTER_ID'].count().reset_index(name='count')
 
-# Title of the dashboard
-st.title("Highway Fuel Efficiency")
+# Title for the app
+st.title("Dogs in Zurich Stats")
+st.text('Updated 10 Sept 2024 7.00 pm')
 
-# Checkbox to show/hide the dataframe
-if st.checkbox("Show dataframe"):
-    st.write(mpg_data.head())
+# Create the choropleth map using Plotly
+fig = px.choropleth_mapbox(
+    district_counts,
+    geojson=counties,
+    locations='STADTKREIS',
+    featureidkey="properties.name",  # Ensure this matches your GeoJSON file's property for district names
+    color='count',
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    zoom=11,
+    center={"lat": 47.3769, "lon": 8.5417},  # Centered on Zurich
+    opacity=0.5,
+    labels={'count': 'Dog Owners'}
+)
 
-# Selection options
-years = mpg_data['year'].unique().tolist()
-years.sort()
-years.insert(0, "All")
+# Remove extra margins around the map
+fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
 
-classes = mpg_data['class'].unique().tolist()
-classes.sort()
-classes.insert(0, "All")
+# Display the map in Streamlit
+st.plotly_chart(fig)
 
-# Radio button to choose between Highway MPG or City MPG
-fuel_efficiency_type = st.radio("Choose Fuel Efficiency Type:", ("Highway MPG", "City MPG"))
+unique_owners = df['HALTER_ID'].nunique()
 
-# Depending on the choice, show the corresponding slider
-if fuel_efficiency_type == "Highway MPG":
-    hwy_min, hwy_max = int(mpg_data['hwy'].min()), int(mpg_data['hwy'].max())
-    hwy_range = st.slider("Select Highway MPG range", min_value=hwy_min, max_value=hwy_max, value=(hwy_min, hwy_max))
-    filtered_data = mpg_data[(mpg_data['hwy'] >= hwy_range[0]) & (mpg_data['hwy'] <= hwy_range[1])]
-else:
-    cty_min, cty_max = int(mpg_data['cty'].min()), int(mpg_data['cty'].max())
-    cty_range = st.slider("Select City MPG range", min_value=cty_min, max_value=cty_max, value=(cty_min, cty_max))
-    filtered_data = mpg_data[(mpg_data['cty'] >= cty_range[0]) & (mpg_data['cty'] <= cty_range[1])]
+# Count male and female owners based on 'GESCHLECHT' column
+male_owners = df[df['GESCHLECHT'] == 'm']['HALTER_ID'].nunique()
+female_owners = df[df['GESCHLECHT'] == 'w']['HALTER_ID'].nunique()
 
-# Year selection
-selected_year = st.selectbox("Select year", years)
 
-# Class selection
-selected_class = st.selectbox("Select class", classes)
+# Placeholder to display the metrics
+placeholder1 = st.empty()  # Number of dogs
 
-# Show class means option
-show_class_means = st.radio("Show class means", ["No", "Yes"])
+# Create columns for owners, male, and female
+col1, col2, col3 = st.columns(3)
+placeholder2 = col1.empty()  # Total owners
+placeholder_male = col2.empty()  # Male owners
+placeholder_female = col3.empty()  # Female owners
 
-# Filter the data further based on year and class
-if selected_year != "All":
-    filtered_data = filtered_data[filtered_data['year'] == int(selected_year)]
+# Starting numbers as half of the total
+start_dogs = len(df) // 2
+start_owners = unique_owners // 2
+start_male_owners = male_owners // 2
+start_female_owners = female_owners // 2
 
-if selected_class != "All":
-    filtered_data = filtered_data[filtered_data['class'] == selected_class]
+# Final numbers for each
+total_dogs = len(df)
+total_owners = unique_owners
 
-# Function to calculate class means and adjust text positions
-def plot_class_means(ax, data):
-    numeric_columns = ['displ', 'hwy' if fuel_efficiency_type == "Highway MPG" else 'cty']  # Numeric columns for calculation
-    means = data.groupby('class')[numeric_columns].mean()  # Compute mean only for numeric columns
-    ax.scatter(means['displ'], means['hwy' if fuel_efficiency_type == "Highway MPG" else 'cty'], color='red', label='Class Mean', s=100, zorder=5)
+# Async function to increment the number of dogs
+async def increment_dogs(placeholder, start, end):
+    for i in range(start, end + 1):  # Increment by 1
+        placeholder.metric("Number of Dogs", i)  # No delta, just the number
+        await asyncio.sleep(0.000001)  # Minimal sleep to ensure fast execution
+
+# Async function to increment the number of owners
+async def increment_owners(placeholder, start, end, placeholder_male, male_start, male_end, placeholder_female, female_start, female_end):
+    male_count = male_start
+    female_count = female_start
+
+    for i in range(start, end + 1):  # Increment total owners
+        placeholder.metric("Number of Owners", i)  # No delta, just the number
+        
+        # Increment male owners only if it hasn't reached the total male owners
+        if male_count <= male_end:
+            placeholder_male.metric("Male Owners", male_count)  # No delta, just the number
+            male_count += 1
+        
+        # Increment female owners only if it hasn't reached the total female owners
+        if female_count <= female_end:
+            placeholder_female.metric("Female Owners", female_count)  # No delta, just the number
+            female_count += 1
+
+        await asyncio.sleep(0.000001)
+
+# Main async function to run both tasks concurrently
+async def main():
+    task1 = asyncio.create_task(increment_dogs(placeholder1, start_dogs, total_dogs))
+    task2 = asyncio.create_task(increment_owners(placeholder2, start_owners, total_owners, placeholder_male, start_male_owners, male_owners, placeholder_female, start_female_owners, female_owners))
     
-    # List to hold text objects for adjustment
-    texts = []
-    for i, row in means.iterrows():
-        label = row.name
-        x = row['displ']
-        y = row['hwy' if fuel_efficiency_type == "Highway MPG" else 'cty']
-        texts.append(ax.text(x, y, label, color='red'))
+    # Wait for both tasks to finish
+    await asyncio.gather(task1, task2)
 
-    # Adjust text positions to avoid overlap
-    adjust_text(texts, arrowprops=dict(arrowstyle='->', color='gray'))
+# Run the async main function within the Streamlit app
+asyncio.run(main())
 
-# Radio button for graph type selection
-graph_type = st.radio("Choose graph type", ["Matplotlib", "Plotly"])
+st.header("What breeds are popular in each District")
 
-# Plot with Matplotlib
-if graph_type == "Matplotlib":
-    fig, ax = plt.subplots()
-    ax.scatter(filtered_data['displ'], filtered_data['hwy'] if fuel_efficiency_type == "Highway MPG" else filtered_data['cty'], alpha=0.7)
-    ax.set_xlabel("Engine Displacement (displ)")
-    ax.set_ylabel("Fuel Efficiency (hwy)" if fuel_efficiency_type == "Highway MPG" else "Fuel Efficiency (cty)")
-    ax.set_title("Fuel Efficiency vs. Engine Displacement")
+# Group data by district and breed, then count the occurrences
+breed_counts = df.groupby(['STADTKREIS', 'RASSE1'])['HALTER_ID'].count().reset_index(name='count')
 
-    if show_class_means == "Yes":
-        plot_class_means(ax, mpg_data)
+# Find the top 10 breeds
+top_10_breeds = df['RASSE1'].value_counts().nlargest(10).index
 
-    st.pyplot(fig)
+# Filter the data to include only the top 10 breeds
+breed_counts_top10 = breed_counts[breed_counts['RASSE1'].isin(top_10_breeds)]
 
-# Plot with Plotly
-else:
-    fig = px.scatter(filtered_data, x='displ', y='hwy' if fuel_efficiency_type == "Highway MPG" else 'cty',
-                     labels={"displ": "Engine Displacement (displ)", "hwy": "Fuel Efficiency (hwy)" if fuel_efficiency_type == "Highway MPG" else "Fuel Efficiency (cty)"},
-                     title="Fuel Efficiency vs. Engine Displacement")
+# Create a stacked bar chart using Plotly
+fig = px.bar(
+    breed_counts_top10,
+    x='STADTKREIS',
+    y='count',
+    color='RASSE1',
+    # title='Dogs in Each District by Breed (Top 10 Breeds)',
+    barmode='stack'
+)
 
-    if show_class_means == "Yes":
-        means = mpg_data.groupby('class')[['displ', 'hwy' if fuel_efficiency_type == "Highway MPG" else 'cty']].mean().reset_index()
-        fig.add_scatter(x=means['displ'], y=means['hwy' if fuel_efficiency_type == "Highway MPG" else 'cty'], mode='markers+text', text=means['class'],
-                        textposition='top right',  # Position the text
-                        marker=dict(color='red', size=10), name='Class Mean')
+# Display the chart in Streamlit
+st.plotly_chart(fig)
 
-    fig.update_layout(
-        xaxis_title="Engine Displacement (L)",
-        yaxis_title="Fuel Efficiency (MPG)" if fuel_efficiency_type == "Highway MPG" else "Fuel Efficiency (cty)",
-        title="Fuel Efficiency vs. Engine Displacement",
-        title_x=0.5  # Center the title
-    )
+st.header("Find Your Pets")
 
-    st.plotly_chart(fig)
+
+# Dropdown for age range with "All" option
+age_range = st.selectbox("Select Age Range", options=["All"] + list(df['ALTER'].unique()))
+
+# Dropdown for district with "All" option
+district = st.selectbox("Select District (STADTKREIS)", options=["All"] + list(df['STADTKREIS'].unique()))
+
+# Dropdown for dog color with "All" option
+dog_color = st.multiselect("Select Dog Color", options=["All"] + list(df['HUNDEFARBE'].unique()), default=["All"])
+
+# Filter the data based on user selection
+filtered_df = df.copy()
+
+# Apply filters based on the dropdown selections
+if age_range != "All":
+    filtered_df = filtered_df[filtered_df['ALTER'] == age_range]
+if district != "All":
+    filtered_df = filtered_df[filtered_df['STADTKREIS'] == district]
+if "All" not in dog_color:
+    filtered_df = filtered_df[filtered_df['HUNDEFARBE'].isin(dog_color)]
+
+# Group by breed and get the top 10 breeds
+top_breeds = filtered_df['RASSE1'].value_counts().nlargest(10).reset_index()
+top_breeds.columns = ['RASSE1', 'count']
+
+# Create the bar chart
+fig = px.bar(top_breeds, x='RASSE1', y='count', title='Top 10 Dog Breeds')
+
+# Show the bar chart in Streamlit
+st.plotly_chart(fig)
